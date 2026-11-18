@@ -1,15 +1,15 @@
 {
-  "name": "clawd-buddy",
-  "description": "Clawd Buddy: a Claude Code mod that brings Clawd, the pixel mascot, into your terminal",
+  "name": "menu-bar-mod",
+  "description": "Claude Menu Bar Mod: Clawd and live usage meters above the prompt in the Claude desktop app (a fork of zhanbodev/clawd-buddy)",
   "owner": {
-    "name": "zhanbodev",
-    "url": "https://github.com/zhanbodev"
+    "name": "Agent8-8",
+    "url": "https://github.com/Agent8-8"
   },
   "plugins": [
     {
       "name": "clawd-buddy",
       "source": "./",
-      "description": "Clawd, Claude Code's pixel mascot, lives above your prompt: it acts out what Claude is doing, bubbles code while it types, dances to your music, and hops when you click it",
+      "description": "Clawd above the prompt, with a context meter, limit bars, burn rate, cache light and model hint beside him (a fork of Clawd Buddy by zhanbodev)",
       "category": "fun",
       "tags": [
         "mod",

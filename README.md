@@ -1,6 +1,50 @@
-<h1 align="center">Clawd Buddy</h1>
+<h1 align="center">Claude Menu Bar Mod</h1>
+
+<p align="center"><b>A fork of <a href="https://github.com/zhanbodev/clawd-buddy">Clawd Buddy</a> by <a href="https://github.com/zhanbodev">zhanbodev</a></b>, with live usage meters beside Clawd.<br>The mascot, his animations, the chat, music and game modes are all zhanbodev's work; this fork only changes the desktop app's band above the prompt.</p>
+
+## What this fork adds (desktop app)
+
+Above the prompt, Clawd sits at the right, with a slim meter bar at the left:
+
+- **Context meter**: a rounded bar showing how full the context window is, turning amber then red, with a **Compact soon / Compact now** pill as it fills.
+- **Prompt cache light**: a small dot saying whether the cache is warm or has gone cold (an estimate, assuming the default 5-minute life).
+- **Limit bars**: your 5-hour and 7-day limits as thin bars, with what's left and when they reset.
+- **Burn rate**: how fast the context is filling and roughly when it will be full.
+- **Session size**: turns and how long the session has been open, plus tokens and cost so far.
+- **Model hint**: your current model, and a rough suggestion of the cheapest model that fits the recent work.
+- A shorter, simpler band: no landscape, Clawd always uses his laptop while Claude works.
+
+The meters need the desktop app; the terminal version is unchanged from the original.
+
+## Install
+
+At the prompt of a terminal session:
+
+```
+/plugin install clawd-buddy --marketplace Agent8-8/claude-menu-bar-mod
+```
+
+From a shell:
+
+```
+claude plugin install clawd-buddy --marketplace Agent8-8/claude-menu-bar-mod
+```
+
+In the desktop app, where `/plugin` does not run: click **+** next to the prompt box, then **Plugins**, **Add marketplace** with `Agent8-8/claude-menu-bar-mod`, then **Add plugin**. Say `y` to add the marketplace and pick the user scope to have it in every session. Then run `/reload-plugins`, or start a new session.
+
+This fork keeps the plugin name `clawd-buddy`, so **don't install it together with the original**. Remove one before adding the other.
+
+Needs Claude Code 2.1.287 or later.
+
+## Credit and license
+
+All the code outside the meters (Clawd, the poses, scenes, chat, music, game) is by zhanbodev from [zhanbodev/clawd-buddy](https://github.com/zhanbodev/clawd-buddy), which at the time of this fork carries no license. This is a GitHub fork of that repository and keeps its history. If the original author asks, it will be changed or removed.
+
+---
 
 <p align="center"><b>English</b> | <a href="README.zh-CN.md">中文</a></p>
+
+<h2 align="center">The original Clawd Buddy docs</h2>
 
 <p align="center">
   <img src="docs/images/hero.svg" width="800" alt="Clawd in a pixel San Francisco by the bay, from morning to night: fishing, coding at a café table, watering a planter, dozing on a bench">

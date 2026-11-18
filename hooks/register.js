@@ -1,4 +1,4 @@
-import { sceneSvg, periodAt, pickActivity, PERIODS, ACTIVITIES } from './clawd-scene.js'
+import { sceneSvg, TOP as SCENE_TOP, BOTTOM as SCENE_BOTTOM, periodAt, pickActivity, PERIODS, ACTIVITIES } from './clawd-scene.js'
 import { newGame, step as gameStep, press as gamePress, start as gameStart, pause as gamePause, frameMs as gameFrameMs, gameSvg } from './clawd-game.js'
 // Tuning knobs
 // Time between animation frames. Redraws are throttled, so don't go much below 100.
@@ -717,6 +717,10 @@ let target = ''
 let isWorking = false
 let idle = 'ahead'
 let turnStartedAt = 0
+// When the prompt cache was last used, and the recent tools, for the cache light and the model hint
+let lastActive = 0
+const recentTools = []
+const CACHE_TTL_MIN = 5 // the prompt cache's default life; an estimate
 // The celebration on screen, or null: which one, what it says, and how far it has played
 let celebration = null
 let celebrationStep = 0
@@ -1119,6 +1123,102 @@ export function register(on, options) {
   // The language the mascot speaks: the one the `language` option picks, or with `auto`, the
   // one the locale names, as any program reads it. Chinese locales get Chinese, others English.
   let words = WORDS.zh
+  // Usage panel: the context window, the session's cost and the rate-limit windows, kept
+  // from `session.measure` and drawn on the left of the desktop scene
+  let usage = null
+  const fmtTokens = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n))
+  const bar = (pct, w = 14) => {
+    const filled = Math.max(0, Math.min(w, Math.round((pct / 100) * w)))
+    return '█'.repeat(filled) + '░'.repeat(w - filled)
+  }
+  const limitName = k => (/five/.test(k) ? '5h limit' : /seven|week/.test(k) ? '7d limit' : String(k).replace(/_/g, ' '))
+  // One quiet line drawn into the scene's sky: context fill, session cost, first rate-limit window
+  const hudText = () => {
+    if (!usage) return ''
+    const c = usage.context || {}
+    const first = []
+    if (c.window) {
+      const pct = typeof c.percent === 'number' ? c.percent : c.tokens ? (c.tokens / c.window) * 100 : 0
+      first.push(fmtTokens(c.tokens || 0) + '/' + fmtTokens(c.window) + ' tokens')
+    }
+    if (usage.cost && typeof usage.cost.usd === 'number') first.push('$' + usage.cost.usd.toFixed(2))
+    const second = (usage.rateLimits || []).map(r => limitName(r.kind).replace(' limit', '') + ' ' + Math.max(0, 100 - Math.round(r.percentUsed)) + '% left')
+    return [first.join(' · '), second.join(' · ')].filter(Boolean).join('\n')
+  }
+  let sessionTurns = 0
+  let currentModel = ''
+  // How fast the context has been filling: samples of (time, tokens), growth only, so a compact
+  // doesn't count as a negative burn
+  const samples = []
+  const noteTokens = (nowMs, tokens) => {
+    if (typeof tokens !== 'number') return
+    const last = samples[samples.length - 1]
+    if (last && last.tokens === tokens) return
+    samples.push({ at: nowMs, tokens })
+    while (samples.length > 400 || (samples.length > 2 && nowMs - samples[0].at > 40 * 60000)) samples.shift()
+  }
+  const span = (mins) => {
+    const total = Math.round(mins)
+    if (total >= 2880) return Math.floor(total / 1440) + 'd ' + Math.floor((total % 1440) / 60) + 'h'
+    return total >= 60 ? Math.floor(total / 60) + 'h ' + (total % 60) + 'm' : total + 'm'
+  }
+  const burnOf = (nowMs, c) => {
+    const recent = samples.filter((sm) => nowMs - sm.at <= 15 * 60000)
+    if (recent.length < 2) return { text: 'Burn rate · gathering…', tone: 'cool' }
+    let grown = 0
+    for (let i = 1; i < recent.length; i++) grown += Math.max(0, recent[i].tokens - recent[i - 1].tokens)
+    const mins = (recent[recent.length - 1].at - recent[0].at) / 60000
+    if (mins < 1 || grown <= 0) return { text: 'Burn rate · steady', tone: 'cool' }
+    const rate = grown / mins
+    const eta = c.window && typeof c.tokens === 'number' ? Math.max(0, c.window - c.tokens) / rate : null
+    const text = 'Burn ' + fmtTokens(Math.round(rate)) + '/min' + (eta !== null ? ' · full in ~' + span(eta) : '')
+    return { text, tone: eta === null ? 'cool' : eta < 30 ? 'hot' : eta < 90 ? 'warm' : 'cool' }
+  }
+  // The prompt cache: warm while it's being used and for a few minutes after, then cold (an estimate)
+  const cacheOf = (nowMs) => {
+    if (isWorking) return { state: 'warm', text: 'in use' }
+    if (!lastActive) return null
+    const left = CACHE_TTL_MIN - (nowMs - lastActive) / 60000
+    return left > 0 ? { state: 'warm', text: Math.ceil(left) + 'm' } : { state: 'cold', text: '' }
+  }
+  // The cheapest model that fits what the last dozen tool calls look like, as a rough hint
+  const nameOf = (model) => (/fable/i.test(model) ? 'Fable 5.2' : /opus/i.test(model) ? 'Opus 5.5' : /sonnet/i.test(model) ? 'Sonnet 5.5' : /haiku/i.test(model) ? 'Haiku 5.5' : String(model || '').slice(0, 14))
+  const modelHint = (model) => {
+    const current = nameOf(model)
+    if (recentTools.length < 3) return current ? [current, ''] : ['', '']
+    let score = 0
+    for (const t of recentTools) {
+      if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(t)) score += 2
+      else if (/^(Agent|Task)$/.test(t) || /^Workflow/.test(t)) score += 3
+      else if (t === 'Bash') score += 1
+    }
+    const target = score >= 8 ? 'Opus 5.5' : score >= 3 ? 'Sonnet 5.5' : 'Haiku 5.5'
+    const fits = current === target || (current === 'Fable 5.2' && target === 'Opus 5.5')
+    return [current, fits ? 'Right fit' : 'Suggest · ' + target]
+  }
+  // The meters on the left: the context, the limits, the burn rate and the session's size
+  const widgetFor = (nowMs) => {
+    const c = (usage && usage.context) || {}
+    if (!c.window) return null
+    noteTokens(nowMs, c.tokens)
+    const pct = typeof c.percent === 'number' ? c.percent : c.tokens ? (c.tokens / c.window) * 100 : 0
+    const mins = usage && usage.startedAt ? Math.max(0, Math.floor((nowMs - usage.startedAt) / 60000)) : 0
+    const tokens = fmtTokens(c.tokens || 0) + '/' + fmtTokens(c.window) + ' tokens' + (usage.cost && typeof usage.cost.usd === 'number' ? ' · $' + usage.cost.usd.toFixed(2) : '')
+    const limits = (usage.rateLimits || []).map((r) => {
+      const left = Math.max(0, 100 - r.percentUsed)
+      let reset = ''
+      const at = r.resetsAt ? Date.parse(r.resetsAt) : NaN
+      if (Number.isFinite(at) && at > nowMs) reset = span((at - nowMs) / 60000)
+      return { name: /five/.test(r.kind) ? '5 HOUR' : /seven|week/.test(r.kind) ? '7 DAY' : String(r.kind).replace(/_/g, ' ').toUpperCase(), left, reset }
+    })
+    return { pct, tokens, limits, cache: cacheOf(nowMs), burn: burnOf(nowMs, c), session: 'Session · ' + sessionTurns + (sessionTurns === 1 ? ' turn' : ' turns') + ' · ' + span(mins) }
+  }
+  on('session.measure', async ($, e, next) => {
+    usage = { context: e.context, rateLimits: e.rateLimits, cost: e.cost }
+    $.ui.invalidate('ui.render')
+    return next(e)
+  })
+
   on('session.start', async ($, e, next) => {
     const language = options && options.language
     if (language === 'zh' || language === 'en') {
@@ -1263,6 +1363,7 @@ export function register(on, options) {
     pose = 'think'
     target = ''
     turnStartedAt = await $.clock.now()
+    lastActive = turnStartedAt
     // A new turn ends any party still going
     if (celebration) {
       celebration = null
@@ -1273,6 +1374,7 @@ export function register(on, options) {
 
   on('turn.complete', async ($, e, next) => {
     isWorking = false
+    lastActive = await $.clock.now()
     if ((await $.clock.now()) - turnStartedAt >= MIN_TURN_MS) {
       celebration = {
         kind: Math.random() < 0.5 ? 'party' : 'fireworks',
@@ -1291,6 +1393,9 @@ export function register(on, options) {
   })
 
   on('tool.call', async ($, e, next) => {
+    lastActive = await $.clock.now()
+    recentTools.push(String(e.tool || ''))
+    if (recentTools.length > 12) recentTools.shift()
     pose = poseOf(String(e.tool || ''))
     poseUntil = (await $.clock.now()) + POSE_MS
     // Show only the file's name, cut short, and never anything else from the tool's input
@@ -1439,7 +1544,8 @@ export function register(on, options) {
   function scene() {
     if (isWorking) {
       const caption = words.poses[pose] + '.'.repeat(1 + ((step >> 2) % 3)) + (target ? ' · ' + target : '')
-      return { grid: workFrame(pose, step, music !== null), caption }
+      // Whatever it's doing, it's doing it at the little laptop
+      return { grid: workFrame('edit', step, music !== null), caption }
     }
     if (celebration) {
       const grid = celebration.kind === 'party' ? partyFrame(celebrationStep) : fireworksFrame(celebrationStep)
@@ -1658,28 +1764,40 @@ export function register(on, options) {
       if (scene_.offsetMin === null) await readZone($)
       const period = currentPeriod(now)
       const idleNow = !isWorking && !celebration && !chat.pending && !music && poke < 0
+      try {
+        const u = await $.session.usage()
+        usage = { context: u.context, rateLimits: u.rateLimits, cost: u.cost, startedAt: u.startedAt }
+        sessionTurns = await $.session.turns()
+        currentModel = await $.session.model()
+      } catch (err) {}
       const { grid, caption } = scene()
-      const activity = idleNow ? idleActivity(now, period) : null
+      const activity = null // no pastimes: idle is Clawd standing there
       const speech = chat.pending && !isWorking ? '.'.repeat(1 + (step % 3)) : chat.bubble ? chat.bubble.text : ''
       const bubble = speech ? bubbleLines(speech, BUBBLE_WIDTH, 3) : null
       // The card's width, about 8 CSS pixels a cell; the drawing is sized by its own markup, which
       // the app fits to the card, so a little over the mark fills it exactly
-      const width = Math.max(120, Math.floor(((typeof e.props.bodyColumns === 'number' ? e.props.bodyColumns : 95) * 8) / 2.5))
+      // Two drawings in a row: the context meter at the left edge, Clawd and his text at the right
+      const big = 1.1
+      const width = 95 // Clawd, with what he's doing at his left
+      const leftWidth = 155 // the context and limit meters
       sceneKey = [period, activity].join('/')
       // The app loads each drawing afresh, its animations from their start: each takes the clock
       // as it is now, so they pick up where the last left off
       const sceneT = now / 1000
-      const source = sceneSvg({
-        width,
-        period,
-        t: sceneT,
-        activity,
-        mascot: idleNow ? null : grid,
-        bubble,
-        caption: bubble ? '' : caption,
+      const common = { period, t: sceneT, activity, mascot: grid, bubble, caption: bubble ? '' : caption, hud: '', widget: widgetFor(now), minimal: true, scale: big }
+      const rightSource = sceneSvg({ ...common, hud: modelHint(currentModel).filter(Boolean).join('\n'), width, part: 'right' })
+      const leftSource = sceneSvg({ ...common, width: leftWidth, part: 'left' })
+      const rowH = (SCENE_BOTTOM - SCENE_TOP) * 2.5 * big
+      const ours = Box({
+        flexDirection: 'row',
+        width: '100%',
+        alignItems: 'center',
+        children: [
+          Svg({ source: leftSource, alt: 'Context window', width: leftWidth * 2.5 * big, height: rowH }),
+          Box({ flexGrow: 1 }),
+          Svg({ source: rightSource, alt: 'Clawd', width: width * 2.5 * big, height: rowH }),
+        ],
       })
-      // The whole card, edge to edge; /clawd hidden puts it away
-      const ours = Box({ width: '100%', children: [Svg({ source, alt: 'Clawd' })] })
       const theirs = await next(e)
       return theirs ? Box({ flexDirection: 'column', children: [ours, theirs] }) : ours
     }

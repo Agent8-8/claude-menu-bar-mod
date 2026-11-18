@@ -1,14 +1,14 @@
 {
   "name": "clawd-buddy",
   "displayName": "Clawd Buddy",
-  "version": "1.4.0",
-  "description": "Clawd, Claude Code's pixel mascot, lives above your prompt in the terminal and the desktop app: it acts out what Claude is doing, chats with you, dances to your music, plays a runner game, and in the desktop app idles in a little pixel San Francisco",
+  "version": "1.5.0",
+  "description": "Clawd, Claude Code's pixel mascot, above your prompt in the desktop app, with live meters beside him: context window and a compact warning, 5-hour and 7-day limits, burn rate, prompt-cache warm/cold, session size, and a model hint. A fork of Clawd Buddy by zhanbodev.",
   "author": {
     "name": "zhanbodev",
     "url": "https://github.com/zhanbodev"
   },
-  "homepage": "https://github.com/zhanbodev/clawd-buddy",
-  "repository": "https://github.com/zhanbodev/clawd-buddy",
+  "homepage": "https://github.com/Agent8-8/claude-menu-bar-mod",
+  "repository": "https://github.com/Agent8-8/claude-menu-bar-mod",
   "keywords": [
     "mod",
     "mascot",
@@ -18,7 +18,9 @@
     "animation",
     "music",
     "game",
-    "desktop"
+    "desktop",
+    "meters",
+    "usage"
   ],
   "types": "./types/index.d.ts",
   "userConfig": {

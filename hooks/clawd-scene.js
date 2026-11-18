@@ -15,6 +15,10 @@ const U = 2.5
 // The ids the drawing's defs go by, unique to each drawing so two on one page never mix
 let ID = 'cs'
 export const SCENE_H = 32
+// The sky above this row (in units) is cropped away, to keep the band low
+export const TOP = 5.5
+// Minimal mode shows down to this row only: the ground strip is two units deep
+export const BOTTOM = 26.5
 // The top of the grass
 const G = 25
 
@@ -872,48 +876,194 @@ function escapeXml(text) {
 //   each pixel a unit wide and two tall, with grid.words over it as [column, row, text, color]
 // - bubble: lines of text a speech bubble left of the mascot says; caption: a line of status
 // - seed: the layout of hills, trees and stars
-export function sceneSvg({ width, period, t = 0, activity = null, mascot = null, bubble = null, caption = '', seed = 7 }) {
+export function sceneSvg({ width, period, t = 0, activity = null, mascot = null, bubble = null, caption = '', hud = '', widget = null, part = 'both', minimal = false, scale = 1, frames = null, seq = null, frameMs = 150, seed = 7 }) {
   ID = 'cs-' + period + '-' + (activity || 'm') + '-' + (hash(width * 31 + seed) % 10000) + '-'
-  const out = [defs(period), backdrop(width, period, t, seed)]
-  const spot = spotOf(width)
-  if (mascot) {
+  // Minimal: no sky or city, just a strip of ground and a small pond, the mascot drawn big
+  const out = minimal ? [] : [defs(period), backdrop(width, period, t, seed)]
+  // Minimal: Clawd floats at the right edge, the text right-aligned to his left
+  const spot = minimal && mascot ? width - 19 : spotOf(width)
+  const textX = minimal && mascot ? (spot + 17 - mascot[0].length - 3) * U : 3 * U
+  const viewH = (minimal ? BOTTOM : SCENE_H) - TOP
+  if (mascot && part !== 'left') {
     // Right-aligned to where the mascot would stand, its bottom on the grass; each of its
     // pixels a unit wide and two tall, its words a cell (2 by 2 pixels) each
-    const cols = mascot[0].length
-    const left = spot + 17 - cols
-    const top = G + 1 - mascot.length * 2
-    const rects = []
-    for (let y = 0; y < mascot.length; y++) {
-      let x = 0
-      while (x < cols) {
-        const c = mascot[y][x]
-        let end = x + 1
-        while (end < cols && mascot[y][end] === c) end++
-        if (c !== null) rects.push(R(left + x, top + y * 2, end - x, 2, hex(c)))
-        x = end
+    // One grid's drawing: its pixels, outlined, and its words
+    const drawGrid = (grid) => {
+      const gcols = grid[0].length
+      const gleft = spot + 17 - gcols
+      const gtop = G + 1 - grid.length * 2
+      const rects = []
+      for (let y = 0; y < grid.length; y++) {
+        let x = 0
+        while (x < gcols) {
+          const c = grid[y][x]
+          let end = x + 1
+          while (end < gcols && grid[y][end] === c) end++
+          if (c !== null) rects.push(R(gleft + x, gtop + y * 2, end - x, 2, hex(c)))
+          x = end
+        }
       }
+      let drawn = outlined(rects.join(''))
+      for (const [col, row, text, color] of grid.words || []) {
+        drawn +=
+          '<text x="' + n((gleft + col * 2) * U) + '" y="' + n((gtop + row * 4 + 3.3) * U) + '" font-family="ui-monospace, Menlo, monospace" font-weight="bold" font-size="' + n(3.6 * U) + '" fill="' + (typeof color === 'number' ? hex(color) : color) + '">' + escapeXml(text) + '</text>'
+      }
+      return drawn
     }
-    out.push(shadow(spot, 15), outlined(rects.join('')))
-    for (const [col, row, text, color] of mascot.words || []) {
-      out.push(
-        '<text x="' + n((left + col * 2) * U) + '" y="' + n((top + row * 4 + 3.3) * U) + '" font-family="ui-monospace, Menlo, monospace" font-weight="bold" font-size="' + n(3.6 * U) + '" fill="' + (typeof color === 'number' ? hex(color) : color) + '">' + escapeXml(text) + '</text>',
-      )
+    if (!minimal) out.push(shadow(spot, 15))
+    if (frames && frames.length > 1) {
+      // The frames play on their own inside the drawing, one shown at a time, so the mascot
+      // moves without the app having to ask for each new picture
+      // CSS in the drawing's own <style>: the first frame is the one that shows if nothing runs
+      // frames are the distinct pictures; seq says which one each step shows (one each, in order, by default).
+      // The first one is drawn showing, the rest hidden by their own attribute, so if nothing runs the
+      // animation, the first picture stands there alone.
+      const order = seq || frames.map((_, i) => i)
+      const count = order.length
+      const dur = n((count * (frameMs || 150)) / 1000)
+      const t4 = (v) => Math.round(v * 10000) / 10000
+      frames.forEach((grid, k) => {
+        const times = [0]
+        const values = [order[0] === k ? 1 : 0]
+        for (let st = 1; st < count; st++) {
+          const was = order[st - 1] === k
+          const now = order[st] === k
+          if (was !== now) {
+            times.push(t4(st / count))
+            values.push(now ? 1 : 0)
+          }
+        }
+        const anim = values.length > 1
+          ? '<animate attributeName="opacity" calcMode="discrete" values="' + values.join(';') + '" keyTimes="' + times.join(';') + '" dur="' + dur + 's" repeatCount="indefinite"/>'
+          : ''
+        out.push('<g' + (k === 0 ? '' : ' opacity="0"') + '>' + anim + drawGrid(grid) + '</g>')
+      })
+    } else {
+      out.push(drawGrid(mascot))
     }
-  } else if (activity && DRAW[activity]) {
+  } else if (activity && DRAW[activity] && part !== 'left') {
     out.push(DRAW[activity](width, t, period))
   }
-  if (caption) {
+  if (caption && part !== 'left') {
+    if (minimal) {
+      // Beside Clawd, under the hud lines
+      const text = caption.length > 22 ? caption.slice(0, 21) + '…' : caption
+      const row = hud ? hud.split('\n').length : 0
+      out.push(
+        '<text x="' + n(textX) + '" y="' + n((TOP + 5 + row * 4.4) * U) + '" text-anchor="end" font-family="ui-sans-serif, system-ui, sans-serif" font-weight="bold" font-size="' + n(11 / scale) + '" fill="#f9c74f" stroke="#1a1a1a" stroke-width="' + n(2.5 / scale) + '" paint-order="stroke">' +
+          escapeXml(text) + '</text>',
+      )
+    } else {
+      out.push(
+        '<text x="' + n((spot - 3) * U) + '" y="' + n((G - 3) * U) + '" text-anchor="end" font-family="ui-sans-serif, system-ui, sans-serif" font-weight="bold" font-size="11" fill="#f9c74f" stroke="#1a1a1a" stroke-width="2.5" paint-order="stroke">' +
+          escapeXml(caption) + '</text>',
+      )
+    }
+  }
+  if (hud && part !== 'left') {
+    hud.split('\n').forEach((line, i) => {
+      out.push(
+        '<text x="' + (minimal ? n(textX) : '8') + '" y="' + n((TOP + (minimal ? 5 : 5.5) + i * 4.4) * U) + '"' + (minimal ? ' text-anchor="end"' : '') + ' font-family="ui-monospace, Menlo, monospace" font-size="' + n((minimal ? 9 : 8) / scale) + '" fill="#ffffff" fill-opacity="0.9" stroke="#1a1a1a" stroke-opacity="0.55" stroke-width="' + n(2.2 / scale) + '" paint-order="stroke" shape-rendering="auto">' +
+          escapeXml(line) + '</text>',
+      )
+    })
+  }
+  if (widget && minimal && part !== 'right') out.push(meter(widget, scale, TOP * U))
+  if (bubble && bubble.length && part !== 'left') {
+    // Minimal: top right, drawn at its own size inside a group that undoes the scale
     out.push(
-      '<text x="' + n((spot - 3) * U) + '" y="' + n((G - 3) * U) + '" text-anchor="end" font-family="ui-sans-serif, system-ui, sans-serif" font-weight="bold" font-size="11" fill="#f9c74f" stroke="#1a1a1a" stroke-width="2.5" paint-order="stroke">' +
-        escapeXml(caption) + '</text>',
+      minimal
+        ? '<g transform="scale(' + n(1 / scale) + ')">' + speech(bubble, ((width * U - 4) * scale) / U, (TOP * U + 4) * scale) + '</g>'
+        : speech(bubble, spot - 2),
     )
   }
-  if (bubble && bubble.length) out.push(speech(bubble, spot - 2))
   return (
-    '<svg xmlns="http://www.w3.org/2000/svg" width="' + n(width * U) + '" height="' + n(SCENE_H * U) + '" viewBox="0 0 ' + n(width * U) + ' ' + n(SCENE_H * U) + '" shape-rendering="crispEdges">' +
-    '<clipPath id="' + ID + 'c"><rect width="' + n(width * U) + '" height="' + n(SCENE_H * U) + '" rx="8"/></clipPath>' +
+    '<svg xmlns="http://www.w3.org/2000/svg" width="' + n(width * U * scale) + '" height="' + n(viewH * U * scale) + '" viewBox="0 ' + n(TOP * U) + ' ' + n(width * U) + ' ' + n(viewH * U) + '" shape-rendering="crispEdges">' +
+    '<clipPath id="' + ID + 'c"><rect y="' + n(TOP * U) + '" width="' + n(width * U) + '" height="' + n(viewH * U) + '" rx="8"/></clipPath>' +
     '<g clip-path="url(#' + ID + 'c)">' + out.join('') + '</g></svg>'
   )
+}
+
+function strip(width, period) {
+  const c = CITY[period]
+  return R(0, G, width, SCENE_H - G, c.pave) + R(0, G, width, 1, c.kerb)
+}
+
+// The meters drawn at the left of the minimal band, in CSS pixels scaled to the drawing. First
+// column: the context as a slim rounded bar with a soft glow, a tick where compacting gets close,
+// a pill that warns when it does, then the tokens and cost and the session's size. Second column:
+// a slim bar for each rate limit (what's left, like a battery) and the burn rate beneath.
+function meter(widget, scale, yoff) {
+  const P = (v) => n(v / scale)
+  const id = ID + 'm'
+  const grey = '#8b9096'
+  const toneOf = (hi) => (hi >= 85 ? ['#fb7185', '#ef4444'] : hi >= 70 ? ['#fcd34d', '#f59e0b'] : ['#5eead4', '#34d399'])
+  const gradients = []
+  const grad = (key, tone) => {
+    gradients.push('<linearGradient id="' + id + key + '" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="' + tone[0] + '"/><stop offset="1" stop-color="' + tone[1] + '"/></linearGradient>')
+    return 'url(#' + id + key + ')'
+  }
+  const out = []
+  // A slim rounded bar: a faint track, a glow, the fill and a highlight along its top
+  const bar = (key, x, y, w, h, frac, tone) => {
+    const fw = Math.max(h, w * Math.max(0, Math.min(1, frac)))
+    const f = grad(key, tone)
+    out.push('<rect x="' + n(x) + '" y="' + n(y) + '" width="' + n(w) + '" height="' + n(h) + '" rx="' + n(h / 2) + '" fill="#ffffff" fill-opacity="0.09"/>')
+    out.push('<rect x="' + n(x) + '" y="' + n(y) + '" width="' + n(fw) + '" height="' + n(h) + '" rx="' + n(h / 2) + '" fill="' + f + '" filter="url(#' + id + 'b)" opacity="0.5"/>')
+    out.push('<rect x="' + n(x) + '" y="' + n(y) + '" width="' + n(fw) + '" height="' + n(h) + '" rx="' + n(h / 2) + '" fill="' + f + '"/>')
+    out.push('<rect x="' + n(x + h / 2) + '" y="' + n(y + h * 0.18) + '" width="' + n(Math.max(0, fw - h)) + '" height="' + n(h * 0.22) + '" rx="' + n(h * 0.11) + '" fill="#ffffff" fill-opacity="0.32"/>')
+  }
+  const label = (x, y, size, text, extra = '') => out.push('<text x="' + n(x) + '" y="' + n(y) + '" font-size="' + P(size) + '"' + extra + '>' + escapeXml(text) + '</text>')
+  out.push('<g shape-rendering="auto" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif">')
+
+  // Column one: the context
+  const pct = Math.max(0, Math.min(100, widget.pct))
+  const accent = pct >= 85 ? '#fb7185' : pct >= 70 ? '#fbbf24' : '#34d399'
+  const x = P(14)
+  const barW = P(190)
+  const barH = P(7)
+  label(x, yoff + P(11), 8.5, 'CONTEXT', ' font-weight="600" letter-spacing="' + P(1.3) + '" fill="' + grey + '"')
+  bar('c', x, yoff + P(17), barW, barH, pct / 100, toneOf(pct))
+  if (widget.cache) {
+    // Whether the prompt cache is warm or has gone cold: a small light and a word beside the label
+    const warm = widget.cache.state === 'warm'
+    const tone = warm ? '#34d399' : '#7aa2c9'
+    const cx = x + P(66)
+    out.push('<circle cx="' + n(cx) + '" cy="' + n(yoff + P(8.2)) + '" r="' + P(2.5) + '" fill="' + tone + '" fill-opacity="' + (warm ? 1 : 0.55) + '"/>')
+    const word = (warm ? 'warm' : 'cold') + (warm && widget.cache.text && pct < 70 ? ' · ' + widget.cache.text : '')
+    label(cx + P(7), yoff + P(11), 9, word, ' fill="' + (warm ? '#c4c8cd' : '#9aa7b4') + '"')
+  }
+  out.push('<rect x="' + n(x + barW * 0.85) + '" y="' + n(yoff + P(15)) + '" width="' + P(1) + '" height="' + n(barH + P(4)) + '" fill="#ffffff" fill-opacity="0.35"/>')
+  label(x + barW + P(10), yoff + P(24), 12, Math.round(pct) + '%', ' font-weight="700" fill="#f3f4f6"')
+  if (pct >= 70) {
+    const text = pct >= 85 ? 'Compact now' : 'Compact soon'
+    const pw = text.length * 5.6 + 18
+    const px = x + barW - P(pw)
+    out.push('<rect x="' + n(px) + '" y="' + n(yoff + P(0.5)) + '" width="' + P(pw) + '" height="' + P(14) + '" rx="' + P(7) + '" fill="' + accent + '" fill-opacity="0.16" stroke="' + accent + '" stroke-opacity="0.55" stroke-width="' + P(1) + '"/>')
+    out.push('<circle cx="' + n(px + P(9)) + '" cy="' + n(yoff + P(7.5)) + '" r="' + P(2.5) + '" fill="' + accent + '"/>')
+    label(px + P(16), yoff + P(10.7), 9, text, ' font-weight="600" fill="' + accent + '"')
+  }
+  if (widget.tokens) label(x, yoff + P(36), 9.5, widget.tokens, ' fill="#c4c8cd"')
+  if (widget.session) label(x, yoff + P(48), 9.5, widget.session, ' fill="' + grey + '"')
+
+  // Column two: the limits, and the burn rate
+  const lx = P(262)
+  const lw = P(150)
+  const lh = P(4)
+  ;(widget.limits || []).slice(0, 2).forEach((lim, i) => {
+    const y = yoff + P(11 + i * 17)
+    const left = Math.max(0, Math.min(100, lim.left))
+    label(lx, y, 8.5, lim.name, ' font-weight="600" letter-spacing="' + P(1.3) + '" fill="' + grey + '"')
+    label(lx + lw, y, 9, Math.round(left) + '% left' + (lim.reset ? ' · ' + lim.reset : ''), ' text-anchor="end" fill="#c4c8cd"')
+    bar('l' + i, lx, y + P(4), lw, lh, left / 100, toneOf(100 - left))
+  })
+  if (widget.burn) {
+    const dot = widget.burn.tone === 'hot' ? '#fb7185' : widget.burn.tone === 'warm' ? '#fbbf24' : '#34d399'
+    out.push('<circle cx="' + n(lx + P(3)) + '" cy="' + n(yoff + P(45)) + '" r="' + P(2.5) + '" fill="' + dot + '"/>')
+    label(lx + P(11), yoff + P(48), 9.5, widget.burn.text, ' fill="#c4c8cd"')
+  }
+  out.push('</g>')
+  return '<defs>' + gradients.join('') + '<filter id="' + id + 'b" x="-20%" y="-300%" width="140%" height="700%"><feGaussianBlur stdDeviation="' + P(3) + '"/></filter></defs>' + out.join('')
 }
 
 function hex(c) {
@@ -921,13 +1071,13 @@ function hex(c) {
 }
 
 // A speech bubble, its right edge at right (units), the lines inside in the app's font
-function speech(lines, right) {
+function speech(lines, right, top) {
   const size = 11
   const lineH = 13
   const widthPx = Math.max(...lines.map((l) => [...l].reduce((a, ch) => a + (/[ᄀ-￿]/.test(ch) ? size : size * 0.58), 0))) + 14
   const heightPx = lines.length * lineH + 8
   const x = right * U - widthPx
-  const y = 2 * U
+  const y = top === undefined ? (TOP + 1) * U : top
   const tail = 'M' + n(right * U - 10) + ' ' + n(y + heightPx - 1) + ' l6 6 l2 -6 z'
   return (
     '<g shape-rendering="auto"><rect x="' + n(x) + '" y="' + n(y) + '" width="' + n(widthPx) + '" height="' + n(heightPx) + '" rx="5" fill="#fffdf6" stroke="#2a2a2a" stroke-width="1"/>' +
