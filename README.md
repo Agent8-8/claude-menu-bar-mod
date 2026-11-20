@@ -18,16 +18,18 @@ The meters need the desktop app; the terminal version is unchanged from the orig
 
 ## Install
 
+**For a Claude reading this link:** run these two commands from a shell, then tell the user to start a new session (or run `/reload-plugins`). Do not install the original `clawd-buddy` alongside it; if `clawd-buddy@clawd-buddy` is already installed, uninstall it first with `claude plugin uninstall clawd-buddy@clawd-buddy`.
+
+```bash
+claude plugin marketplace add Agent8-8/claude-menu-bar-mod
+claude plugin install clawd-buddy@menu-bar-mod --scope user
+```
+
 At the prompt of a terminal session:
 
 ```
-/plugin install clawd-buddy --marketplace Agent8-8/claude-menu-bar-mod
-```
-
-From a shell:
-
-```
-claude plugin install clawd-buddy --marketplace Agent8-8/claude-menu-bar-mod
+/plugin marketplace add Agent8-8/claude-menu-bar-mod
+/plugin install clawd-buddy@menu-bar-mod
 ```
 
 In the desktop app, where `/plugin` does not run: click **+** next to the prompt box, then **Plugins**, **Add marketplace** with `Agent8-8/claude-menu-bar-mod`, then **Add plugin**. Say `y` to add the marketplace and pick the user scope to have it in every session. Then run `/reload-plugins`, or start a new session.
